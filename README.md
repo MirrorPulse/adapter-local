@@ -1,14 +1,9 @@
-# MirrorPulse Adapters
+# MirrorPulse Local Directory Adapter
 
-This repository template is the starting point for an independently packaged MirrorPulse Adapter Worker.
+This is the official repository for the MirrorPulse Local Directory Adapter.
 
-## Layout
+The repository currently contains the independently buildable Adapter SDK, a sample Worker, and the package skeleton inherited from [adapter-template](https://github.com/MirrorPulse/adapter-template). The Local Directory protocol Worker has not yet been moved into this repository. The example manifest is a template and is not a releasable official package.
 
-- `src/` contains reusable Worker SDK code.
-- `samples/` contains a minimal executable Worker.
-- `template/` contains the manifest and `.mpadapter` package skeleton.
-- `eng/` contains repository validation and packaging scripts.
+Run `pwsh ./eng/verify.ps1` to validate the current scaffold. No signed `.mpadapter` release has been published from this repository.
 
-Adapters communicate with MirrorPulse over the current-user Named Pipe contract and receive configuration, credentials references, source-directory grants, and cache paths from MirrorPulse at runtime.
-
-The template does not implement a storage protocol. Provider repositories should add their own protocol code and publish a signed `.mpadapter` release.
+Licensed under Apache-2.0. See [LICENSE](LICENSE).
