@@ -17,7 +17,7 @@ permissions:
 env:
   ADAPTER_ID: 'com.mirrorpulse.adapter.local'
   ADAPTER_LABEL: 'Local'
-  WORKER_PROJECT: 'samples/MirrorPulse.Adapter.SampleWorker/MirrorPulse.Adapter.SampleWorker.csproj'
+  WORKER_PROJECT: 'src/MirrorPulse.Adapter.Local.Worker/MirrorPulse.Adapter.Local.Worker.csproj'
 
 jobs:
   release:
@@ -74,7 +74,7 @@ jobs:
             installPolicy = [ordered]@{ maximumInstallations = $null }
             instancePolicy = [ordered]@{ maximumInstances = $null; maximumRootDefinitions = $null }
             rootDefinitions = @([ordered]@{ key = $env:ADAPTER_ID.Split('.')[-1]; label = $env:ADAPTER_LABEL; directoryName = $env:ADAPTER_LABEL; customEntry = $false })
-            capabilities = [ordered]@{ network = $true; sourceDirectory = $false; remoteChanges = $true; rangeRead = $true }
+            capabilities = [ordered]@{ network = $false; sourceDirectory = $true; remoteChanges = $false; rangeRead = $true }
             locales = @('en-US')
             localeMetadata = [ordered]@{ 'en-US' = [ordered]@{ displayName = $env:ADAPTER_LABEL; resourcePath = 'locales/en-US.json' } }
             minimumMirrorPulseVersion = '1.0.0'
