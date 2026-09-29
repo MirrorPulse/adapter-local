@@ -22,6 +22,6 @@ jobs:
           try {
             Write-Output "Subject: $($certificate.Subject)"
             Write-Output "Thumbprint: $($certificate.Thumbprint)"
-            Write-Output ($certificate.GetRSAPublicKey().ExportSubjectPublicKeyInfoPem())
+            Write-Output ([System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate).ExportSubjectPublicKeyInfoPem())
           }
           finally { $certificate.Dispose() }
