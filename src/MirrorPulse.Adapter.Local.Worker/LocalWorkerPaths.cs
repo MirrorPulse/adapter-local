@@ -62,4 +62,14 @@ public sealed class LocalWorkerPaths
 
         return path;
     }
+
+    public string ResolveDirectory(string relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath))
+        {
+            return _root;
+        }
+
+        return Resolve(relativePath);
+    }
 }

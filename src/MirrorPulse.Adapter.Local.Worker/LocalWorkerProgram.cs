@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Globalization;
+using System.Text;
 using MirrorPulse.Adapter.Sdk;
 
 namespace MirrorPulse.Adapter.Local.Worker;
@@ -112,6 +114,9 @@ internal sealed class LocalWorkerTransferProtocol(
                 case "Upload":
                     await UploadAsync(command, cancellationToken).ConfigureAwait(false);
                     break;
+                case "List":
+                    await ListAsync(command, cancellationToken).ConfigureAwait(false);
+                    break;
                 default:
                     throw new InvalidDataException("The Local Worker received an unsupported command.");
             }
@@ -146,6 +151,76 @@ internal sealed class LocalWorkerTransferProtocol(
         await channel.SendAsync("StatResult", command.RequestId, true,
             new { revision = Revision(resolved), length = new FileInfo(resolved).Length }, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private async Task ListAsync(AdapterControlFrame command, CancellationToken cancellationToken)
+    {
+        string path = command.Payload.GetProperty("path").GetString() ?? string.Empty;
+        int pageSize = command.Payload.GetProperty("pageSize").GetInt32();
+        if (pageSize is < 1 or > 512)
+        {
+            throw new InvalidDataException("The Local directory page size is invalid.");
+        }
+
+        int offset = 0;
+        if (command.Payload.TryGetProperty("cursor", out JsonElement cursor) &&
+            cursor.ValueKind is not JsonValueKind.Null && !string.IsNullOrEmpty(cursor.GetString()))
+        {
+            string text = Encoding.UTF8.GetString(Convert.FromBase64String(cursor.GetString()!));
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out offset) || offset < 0)
+            {
+                throw new InvalidDataException("The Local directory cursor is invalid.");
+            }
+        }
+
+        string directory = paths.ResolveDirectory(path);
+        if (!Directory.Exists(directory))
+        {
+            throw new DirectoryNotFoundException(directory);
+        }
+
+        string[] children = Directory.EnumerateFileSystemEntries(directory)
+            .OrderBy(item => Path.GetFileName(item), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => Path.GetFileName(item), StringComparer.Ordinal)
+            .ToArray();
+        if (offset > children.Length)
+        {
+            throw new InvalidDataException("The Local directory cursor is past the end of the page.");
+        }
+
+        string root = paths.Root;
+        var entries = new List<object>(Math.Min(pageSize, children.Length - offset));
+        foreach (string child in children.Skip(offset).Take(pageSize))
+        {
+            bool isDirectory = Directory.Exists(child);
+            FileInfo? file = isDirectory ? null : new FileInfo(child);
+            string relative = Path.GetRelativePath(root, child).Replace(Path.DirectorySeparatorChar, '/');
+            DateTime creation = File.GetCreationTimeUtc(child);
+            DateTime lastWrite = File.GetLastWriteTimeUtc(child);
+            entries.Add(new
+            {
+                remoteId = relative,
+                remoteRevision = isDirectory
+                    ? lastWrite.Ticks.ToString(CultureInfo.InvariantCulture)
+                    : Revision(child),
+                itemKind = isDirectory ? "Directory" : "File",
+                relativePath = relative,
+                length = file?.Length,
+                creationTime = new DateTimeOffset(creation, TimeSpan.Zero),
+                lastWriteTime = new DateTimeOffset(lastWrite, TimeSpan.Zero),
+                isDeleted = false,
+            });
+        }
+
+        int nextOffset = offset + entries.Count;
+        bool complete = nextOffset >= children.Length;
+        await channel.SendAsync("DirectoryPage", command.RequestId, true, new
+        {
+            entries,
+            cursor = complete ? null : Convert.ToBase64String(Encoding.UTF8.GetBytes(nextOffset.ToString(
+                CultureInfo.InvariantCulture))),
+            isComplete = complete,
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ReadRangeAsync(AdapterControlFrame command, CancellationToken cancellationToken)
