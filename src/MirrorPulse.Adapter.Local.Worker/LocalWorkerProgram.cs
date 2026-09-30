@@ -114,6 +114,12 @@ internal sealed class LocalWorkerTransferProtocol(
                 case "Upload":
                     await UploadAsync(command, cancellationToken).ConfigureAwait(false);
                     break;
+                case "Delete":
+                    await DeleteAsync(command, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "Move":
+                    await MoveAsync(command, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "List":
                     await ListAsync(command, cancellationToken).ConfigureAwait(false);
                     break;
@@ -129,10 +135,20 @@ internal sealed class LocalWorkerTransferProtocol(
                 InvalidDataException or ArgumentException or JsonException => "InvalidRequest",
                 UnauthorizedAccessException => "AccessDenied",
                 FileNotFoundException => "SourceUnavailable",
+                NotSupportedException => "CapabilityUnavailable",
                 _ => "RetryableTransferFailure",
             };
-            await channel.SendAsync("OperationError", command.RequestId, true, new { code },
-                CancellationToken.None).ConfigureAwait(false);
+            if (exception is LocalRevisionConflictException conflict)
+            {
+                await channel.SendAsync("OperationError", command.RequestId, true,
+                    new { code, expectedRevision = conflict.ExpectedRevision, actualRevision = conflict.ActualRevision },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                await channel.SendAsync("OperationError", command.RequestId, true, new { code },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
         }
     }
 
@@ -320,6 +336,65 @@ internal sealed class LocalWorkerTransferProtocol(
         }
     }
 
+    private async Task DeleteAsync(AdapterControlFrame command, CancellationToken cancellationToken)
+    {
+        string path = command.Payload.GetProperty("path").GetString()
+            ?? throw new InvalidDataException("The Local delete path is missing.");
+        string? expected = command.Payload.TryGetProperty("expectedRevision", out JsonElement expectedElement) &&
+            expectedElement.ValueKind is not JsonValueKind.Null ? expectedElement.GetString() : null;
+        bool isDirectory = command.Payload.GetProperty("isDirectory").GetBoolean();
+        if (isDirectory)
+        {
+            throw new NotSupportedException("The Local Worker does not delete directories through the mutation protocol.");
+        }
+
+        string resolved = paths.Resolve(path);
+        string? current = File.Exists(resolved) ? Revision(resolved) : null;
+        if (current is null)
+        {
+            await channel.SendAsync("MutationComplete", command.RequestId, true,
+                new { revision = (string?)null }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!string.Equals(current, expected, StringComparison.Ordinal))
+        {
+            throw new LocalRevisionConflictException(expected, current);
+        }
+
+        File.Delete(resolved);
+        await channel.SendAsync("MutationComplete", command.RequestId, true,
+            new { revision = (string?)null }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task MoveAsync(AdapterControlFrame command, CancellationToken cancellationToken)
+    {
+        string sourcePath = command.Payload.GetProperty("sourcePath").GetString()
+            ?? throw new InvalidDataException("The Local move source path is missing.");
+        string destinationPath = command.Payload.GetProperty("destinationPath").GetString()
+            ?? throw new InvalidDataException("The Local move destination path is missing.");
+        string? expected = command.Payload.TryGetProperty("expectedRevision", out JsonElement expectedElement) &&
+            expectedElement.ValueKind is not JsonValueKind.Null ? expectedElement.GetString() : null;
+        bool isDirectory = command.Payload.GetProperty("isDirectory").GetBoolean();
+        if (isDirectory)
+        {
+            throw new NotSupportedException("The Local Worker does not move directories through the mutation protocol.");
+        }
+
+        string source = paths.Resolve(sourcePath);
+        string destination = paths.Resolve(destinationPath);
+        string? current = File.Exists(source) ? Revision(source) : null;
+        if (!string.Equals(current, expected, StringComparison.Ordinal))
+        {
+            throw new LocalRevisionConflictException(expected, current);
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        File.Move(source, destination, overwrite: true);
+        await channel.SendAsync("MutationComplete", command.RequestId, true,
+            new { revision = Revision(destination) }, cancellationToken).ConfigureAwait(false);
+    }
+
     private static string Revision(string path)
     {
         FileInfo file = new(path);
@@ -330,5 +405,14 @@ internal sealed class LocalWorkerTransferProtocol(
 
 internal sealed class LocalRevisionConflictException : IOException
 {
-    public LocalRevisionConflictException() : base("The local source changed before upload completion.") { }
+    public LocalRevisionConflictException(string? expectedRevision = null, string? actualRevision = null)
+        : base("The local source changed before a conditional operation could complete.")
+    {
+        ExpectedRevision = expectedRevision;
+        ActualRevision = actualRevision;
+    }
+
+    public string? ExpectedRevision { get; }
+
+    public string? ActualRevision { get; }
 }
